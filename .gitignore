@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.venv/
+build/
+dist/
+.coverage
+*.log
+~/.miniclaudecode/sessions/
+
+# Secrets -- the file may contain real API keys. The committed `.env.example`
+# is the template.
+.env
+.env.local

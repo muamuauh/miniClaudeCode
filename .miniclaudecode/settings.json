@@ -1,0 +1,76 @@
+{
+  "profiles": {
+    "anthropic": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "api_key_env": "ANTHROPIC_API_KEY"
+    },
+    "openai-gpt4o": {
+      "provider": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-4o",
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    "deepseek": {
+      "provider": "openai",
+      "base_url": "https://api.deepseek.com/v1",
+      "model": "deepseek-chat",
+      "api_key_env": "DEEPSEEK_API_KEY"
+    },
+    "deepseek-coder": {
+      "provider": "openai",
+      "base_url": "https://api.deepseek.com/v1",
+      "model": "deepseek-coder",
+      "api_key_env": "DEEPSEEK_API_KEY"
+    },
+    "openrouter-claude": {
+      "provider": "openai",
+      "base_url": "https://openrouter.ai/api/v1",
+      "model": "anthropic/claude-3.5-sonnet",
+      "api_key_env": "OPENROUTER_API_KEY"
+    },
+    "siliconflow-qwen": {
+      "provider": "openai",
+      "base_url": "https://api.siliconflow.cn/v1",
+      "model": "Qwen/Qwen2.5-Coder-32B-Instruct",
+      "api_key_env": "SILICONFLOW_API_KEY"
+    },
+    "moonshot": {
+      "provider": "openai",
+      "base_url": "https://api.moonshot.cn/v1",
+      "model": "moonshot-v1-32k",
+      "api_key_env": "MOONSHOT_API_KEY"
+    },
+    "ollama-local": {
+      "provider": "openai",
+      "base_url": "http://localhost:11434/v1",
+      "model": "qwen2.5-coder",
+      "api_key_env": "OLLAMA_API_KEY"
+    },
+    "custom-inline-example": {
+      "provider": "openai",
+      "base_url": "https://your-proxy.example.com/v1",
+      "model": "your-model-name",
+      "api_key": "sk-paste-key-here-or-use-api_key_env-instead"
+    }
+  },
+  "permission_mode": "ask",
+  "max_turns": 30,
+  "context_window": 200000,
+  "compact_threshold_ratio": 0.75,
+  "compact_keep_recent": 4,
+  "compact_model": "claude-haiku-4-5",
+  "max_skills_in_index": 30,
+  "hooks": {
+    "PreToolUse": [],
+    "PostToolUse": [],
+    "UserPromptSubmit": []
+  },
+  "pricing": {
+    "claude-sonnet-4-5":   {"input": 3.00, "output": 15.00},
+    "claude-haiku-4-5":    {"input": 1.00, "output":  5.00},
+    "gpt-4o":              {"input": 2.50, "output": 10.00},
+    "deepseek-chat":       {"input": 0.27, "output":  1.10},
+    "deepseek-coder":      {"input": 0.27, "output":  1.10}
+  }
+}
