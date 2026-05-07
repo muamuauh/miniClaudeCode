@@ -8,15 +8,17 @@
 
 ## 一、架构层面
 
-### Q1. 这个项目和原 miniClaudeCode 的本质差异是什么？
+### Q1. 这个项目想解决什么问题？目标和定位是什么？
 
-原项目是**蒸馏**：把 Claude Code 50 万行压到 800 行做教学样本，刻意删掉了 SubAgent / 并行 / Hooks / MCP / Skills / 压缩 / 持久化。
+一个轻量级的 AI 编码助手框架。核心是**异步 agent loop + 工具系统 + 权限门控**，外加这一套之上的工程化扩展：SubAgent / 并行执行 / Skills / Hooks / 上下文自动压缩 / Token 与成本遥测 / 多 LLM provider 支持。
 
-我这个 fork 把这些"被刻意删掉"的能力以**克制**的方式补回来，目标不是复刻 Claude Code 的全部功能，而是：
+定位：
 
-1. 保留原项目的教学清晰度（"Agent Loop 是灵魂、工具是双手、权限是护盾"）
-2. 演示这些能力**可以**怎么实现，每一处都讲清楚为什么
-3. 真正能用——支持多 LLM provider，能跑 DeepSeek / OpenAI / 本地 Ollama
+1. **可读性优先**——核心循环就一个 `agent_loop.py`，每一处设计都能讲清楚为什么这样写
+2. **工程化扎实**——131 个测试覆盖关键不变量（顺序保持、上下文隔离、深度上限、原子写、OpenAI 兼容边界）
+3. **真能用**——支持 Anthropic / OpenAI / DeepSeek / OpenRouter / SiliconFlow / Moonshot / 本地 Ollama / 任何 OpenAI 兼容的中转站
+
+边界：不做 MCP、不做 worktree 沙盒、不做 5 层权限模型。把复杂度留给它真正属于的地方。
 
 总规模 ~3500 行核心 + ~1500 行测试，对应 5 个清晰的实现 phase。
 
@@ -27,7 +29,7 @@
 第一阶段其实就是直调 Anthropic SDK。但**第一阶段就**引入了 `LLMClient` ABC 作为占位（虽然只有 Anthropic 一个实现），原因有三：
 
 1. **预先把"provider 特定"和"业务"切开**。等到 P5 加 OpenAI 兼容时，agent_loop 一行没动，只在 `factory.build_client` 里多一个 if 分支。如果到 P5 才抽象，就要改 `agent_loop.py` 里所有 `client.messages.create` 的位置。
-2. **测试解耦**。所有 agent_loop 测试都用 `ScriptedClient` 喂 LLMResponse，根本不需要 mock SDK。这让测试数量从原项目的 ~10 个涨到现在 131 个还能秒级跑完。
+2. **测试解耦**。所有 agent_loop 测试都用 `ScriptedClient` 喂 LLMResponse，根本不需要 mock SDK。131 个测试秒级跑完。
 3. **明确内部消息格式**。我选 Anthropic-shaped 作为内部规范（因为它有结构化的 content blocks），所有 provider 实现都翻译成这个形状。OpenAI 客户端做的就是 Anthropic ↔ OpenAI 双向翻译，agent_loop 完全感知不到。
 
 代价：多了一层间接，但每层只 ~30 行。值。
@@ -89,7 +91,7 @@ class Tool(ABC):
 - **2 层**：父 → 子 → 孙。覆盖绝大多数实战模式，且 token 增长仍可控
 - **3 层及以上**：递归深度无明显收益，token 成本指数膨胀
 
-实战中 Claude Code 自己也是 2 层。我跟着这个经验值。
+经验上 2 层覆盖绝大多数实战模式（研究 → 验证、采集 → 汇总），再深就是过度递归。
 
 实现细节：
 
@@ -259,7 +261,7 @@ maybe("todo_write", lambda: TodoWriteTool(self.todo_store))
 截断策略最简单（"删掉最老的一半"），但有两个问题：
 
 1. **信息丢失**：早期 user 决策（"我们用 Python 3.10"）丢了之后，后续 turn 可能 LLM 又重新问一遍
-2. **可能切坏 tool_use/tool_result 配对**：原 miniClaudeCode 的 `_truncate_if_needed` 就有这个风险
+2. **可能切坏 tool_use/tool_result 配对**：朴素截断不感知消息边界，容易把"工具调用"和它的"结果"切散，下一次 API 调用直接 400
 
 我的实现 ([context.py](../miniclaudecode/context.py))：
 
@@ -349,17 +351,12 @@ except Exception:
 
 ### Q16. 为什么不用 LangChain / pydantic-ai / 现成 agent 框架？
 
-教学+工程化定位决定的。如果用框架：
+两条理由：
 
-- 代码量从 ~3500 行降到 ~500 行
-- 但读者看到的是"框架的 API 调用"，不是"agent 怎么实现"
-- 框架版本升级会让代码烂掉，教学价值递减
+- **可读性**：用框架代码量能从 ~3500 行降到 ~500 行，但读者看到的是"框架的 API 调用"而不是"agent 怎么实现"。本项目目标之一是把每一处设计讲清楚（这是 docs/technical-details.md 存在的意义）。
+- **可控性**：遇到 OpenAI 兼容中转站的奇葩行为能直接改翻译层（[openai_compat.py](../miniclaudecode/llm/openai_compat.py) 那 6 个边界条件就是真踩出来的）而不是发 GitHub issue 等三个月。框架版本升级也不会让自己的代码烂掉。
 
-而我手写：
-
-- 每一处都有理由可讲（这就是 docs/technical-details.md 存在的意义）
-- 完全可控，遇到 OpenAI 兼容中转站的奇葩行为能直接改翻译层而不是发 GitHub issue 等三个月
-- 测试不依赖外部框架，跑得飞快（131 个测试 1.4 秒）
+副作用：测试不依赖外部框架，跑得飞快（131 个测试 1.4 秒）。
 
 代价：能力面比框架窄，没有 streaming UI、没有 LangSmith 集成、没有内置的 vector store。但项目目标本来就不在那里。
 
@@ -429,11 +426,11 @@ def load_env_files(...):
 
 3. **Worktree 沙盒**：让 subagent 在独立的临时目录里跑，避免污染主仓库。Windows 上 worktree 行为不一致，且大多数情况 subagent 只读不写。
 
-4. **Plan 模式预先生成 plan.md**：原 Claude Code 的 plan mode 现在还会写 plan 文件。本项目的 PLAN 模式只是禁用 write tools，简化处理。
+4. **Plan 模式预先生成 plan.md**：让 plan 模式产出可 review 的计划文件再执行。当前 PLAN 模式只是禁用 write tools，简化处理；要做完整版需要新增"plan 阶段 → 用户审阅 → 切到 auto/ask 执行"的状态机。
 
 5. **OAuth / API key 自动刷新**：本地工具用静态 key 就够。
 
-6. **多 turn streaming + 并行 agent group + RAG**：超出"教学+工程化"定位的范围。
+6. **多 turn streaming + 并行 agent group + RAG**：超出当前定位的范围，这些更适合作为上层应用基于本框架去构建。
 
 每个砍掉的特性都对应一个 GitHub issue 在脑子里：能讲清楚为什么不做，将来要做的话从哪儿改。
 

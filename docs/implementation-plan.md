@@ -1,10 +1,12 @@
-# Enhanced miniClaudeCode — Implementation Plan
+# miniClaudeCode — Implementation Plan
 
 ## Context
 
-用户希望基于 [D:\codes\miniClaudeCode](D:\codes\miniClaudeCode)（一个把 Claude Code 蒸馏到 ~950 行的 Python 教学项目）在 [d:\codes\my-miniClaudeCode](d:/codes/my-miniClaudeCode/)（当前为空）上构建一个个人增强版。原项目刻意舍弃了 SubAgent、并行执行、Hooks、MCP、Skill、压缩、持久化等能力；本项目要把这些"被刻意删去的部分"以**克制、可读**的方式补回来，作为学习+实用工具，而不是企业级产品。
+本项目是一个轻量级 AI 编码助手框架，核心是异步 agent loop + 工具系统 + 权限门控，外加一系列工程化能力：SubAgent（隔离 fork）、并行执行、Skills、Hooks、上下文自动压缩、Token/成本遥测、多 LLM provider（Anthropic / OpenAI 兼容的任意中转站）、Session 持久化、Slash 命令模板、Diff 预览。
 
-**目标边界**：核心代码 ≤ ~3000 行，保留原项目的教学清晰度（"Agent Loop 是灵魂、工具是双手、权限是护盾"），不引入 enterprise 复杂度（不做 MCP、不做 worktree 沙盒、不做 5 层权限模型）。
+工作目录：[d:\codes\my-miniClaudeCode](d:/codes/my-miniClaudeCode/)。
+
+**目标边界**：核心代码 ≤ ~3000 行，保持模块清晰可读（"Agent Loop 是灵魂、工具是双手、权限是护盾"），不引入 enterprise 复杂度（不做 MCP、不做 worktree 沙盒、不做 5 层权限模型）。
 
 **用户已确认的关键决策**：
 - 语言：**Python 3.10+**（用 asyncio 实现并行）
@@ -26,7 +28,7 @@
 ```
 d:\codes\my-miniClaudeCode\
 ├── pyproject.toml                # 在 miniconda env=miniClaudeCode 内 pip install -e .；deps: anthropic, openai, rich, pyyaml, httpx
-├── README.md                     # 项目说明 + 与原项目差异表
+├── README.md                     # 项目说明 + 功能概览
 ├── CLAUDE.md                     # 项目 memory（运行时自动加载）
 ├── .miniclaudecode/
 │   ├── settings.json             # 权限规则 + hooks + 默认 model

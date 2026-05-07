@@ -1,9 +1,11 @@
-# miniClaudeCode (enhanced fork)
+# miniClaudeCode
 
-基于 [bcefghj/miniClaudeCode](https://github.com/bcefghj/miniClaudeCode) 的个人增强版。
-原项目把 Claude Code 蒸馏到 ~950 行作为教学样本，本项目在保持可读性的前提下把
-**SubAgent / 并行执行 / Skill 系统 / Hooks / 上下文压缩 / Token 遥测 / 多 LLM 提供方**
-等被刻意删去的能力以克制的方式补回来。
+一个轻量级 AI 编码助手框架。核心是异步 agent loop + 工具系统 + 权限门控，外加一整套
+工程化能力：**SubAgent / 并行执行 / Skill 系统 / Hooks / 上下文自动压缩 / Token & 成本
+遥测 / 多 LLM 提供方（Anthropic / OpenAI / DeepSeek / 任意 OpenAI 兼容中转站）/
+Session 持久化 / Slash 命令模板 / Diff 预览**。
+
+设计目标：核心代码 ≤ ~3000 行，每一处都讲清楚为什么这样写。
 
 📚 **文档**（[docs/](docs/) 下的索引见 [docs/README.md](docs/README.md)）：
 
@@ -15,7 +17,7 @@
 
 ## 当前进度
 
-- [x] **P1** 忠实克隆 + LLM 抽象（6 工具、agent loop、2 层权限、context、Rich REPL）
+- [x] **P1** 核心骨架 + LLM 抽象层（6 工具、agent loop、2 层权限、context、Rich REPL）
 - [x] **P2** 异步化 + 并行 dispatch（`Tool.aexecute` + `asyncio.gather` + 顺序保持 + 错误隔离）
 - [x] **P3** Subagent + Skill + TodoWrite（深度上限 2、上下文隔离、并行 Task、按需 skill 加载）
 - [x] **P4** Hooks + Context 压缩 + Token/成本 Telemetry + settings.json 分层加载
@@ -322,16 +324,6 @@ ASK 模式下，`write_file` / `edit_file` 在真正执行前会：
   自动包装 —— 业务方零改动
 - async-native 工具（如 P5 WebFetch）直接覆盖 `aexecute`
 
-## 与原项目的差异（已实现部分）
-
-| 维度 | 原项目 | 本项目（P1） |
-|---|---|---|
-| LLM 客户端 | 直接 `anthropic.Anthropic()` | 通过 `LLMClient` 抽象，预留 OpenAI 兼容入口 |
-| 终端输出 | 纯 `print` / `sys.stdout` | `rich.Console`（彩色 tool 状态） |
-| 工具结果回填 | 内联在 `_execute_tool_calls` | 抽成 `_dispatch_one`，便于 P2 改并行 |
-| 上下文 | 同 | 同（P4 才加压缩） |
-| 权限 | 2 层 | 2 层（P4 加 settings.json 第三层） |
-
 ## License
 
-MIT（与原项目一致）。
+MIT。
