@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass
@@ -58,8 +58,15 @@ class LLMClient(ABC):
         tools: list[dict[str, Any]],
         model: str,
         max_tokens: int = 8192,
+        on_text: "Callable[[str], None] | None" = None,
     ) -> LLMResponse:
-        """Synchronous one-shot completion. Async variant comes in P2."""
+        """Synchronous completion, assembled into a single LLMResponse.
+
+        If `on_text` is given, the provider's streaming API is used and each
+        text delta is passed to the callback as it arrives. The fully assembled
+        LLMResponse (text + tool_calls + usage) is still returned, so callers
+        that ignore `on_text` see identical behavior either way.
+        """
         ...
 
     def count_tokens(self, text: str) -> int:

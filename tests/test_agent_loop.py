@@ -121,3 +121,65 @@ def test_max_turns_safety():
     assert "max turns" in out.lower()
     # Loop body called exactly max_turns times.
     assert len(client.calls) == 3
+
+
+# ---------- streaming ----------
+
+class StreamingClient(LLMClient):
+    """Emits text via the on_text callback when streaming is requested."""
+
+    def __init__(self, chunks: list[str]) -> None:
+        self.chunks = chunks
+        self.on_text_called = False
+
+    def chat(self, *, on_text: Any = None, **kwargs: Any) -> LLMResponse:
+        full = "".join(self.chunks)
+        if on_text is not None:
+            self.on_text_called = True
+            for c in self.chunks:
+                on_text(c)
+        return LLMResponse(
+            text_blocks=[full],
+            raw_content=[{"type": "text", "text": full}],
+            stop_reason="end_turn",
+            usage={"input_tokens": 5, "output_tokens": 3},
+        )
+
+
+def _terminal_agent(client: LLMClient, *, stream: bool, is_subagent: bool = False):
+    from io import StringIO
+    from rich.console import Console
+
+    buf = StringIO()
+    console = Console(file=buf, force_terminal=True, width=80)
+    cfg = Config(permission_mode=PermissionMode.AUTO, stream=stream)
+    agent = AgentLoop(config=cfg, registry=ToolRegistry(), client=client,
+                      console=console, _is_subagent=is_subagent)
+    return agent, buf
+
+
+def test_streaming_prints_text_once_and_records_usage():
+    client = StreamingClient(["Hel", "lo ", "world"])
+    agent, buf = _terminal_agent(client, stream=True)
+    out = agent.run("hi")
+    assert out == "Hello world"
+    assert client.on_text_called is True
+    output = buf.getvalue()
+    # Streamed live and NOT re-printed by _render_response.
+    assert output.count("Hello world") == 1
+    # Usage still recorded from the assembled response.
+    assert agent.telemetry.cumulative.output_tokens == 3
+
+
+def test_no_stream_uses_blocking_path_even_on_terminal():
+    client = StreamingClient(["a", "b"])
+    agent, _ = _terminal_agent(client, stream=False)
+    assert agent.run("hi") == "ab"
+    assert client.on_text_called is False
+
+
+def test_subagent_never_streams():
+    client = StreamingClient(["x", "y"])
+    agent, _ = _terminal_agent(client, stream=True, is_subagent=True)
+    agent.run("hi")
+    assert client.on_text_called is False

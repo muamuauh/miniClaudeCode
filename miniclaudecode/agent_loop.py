@@ -23,6 +23,8 @@ Public API:
 from __future__ import annotations
 
 import asyncio
+import random
+import time
 from typing import Any, Callable
 
 from rich.console import Console
@@ -44,6 +46,13 @@ from .tools.todo_write import TodoStore, TodoWriteTool
 
 # Tools that should pop a diff preview + y/n confirm in ASK mode.
 _DIFF_CONFIRM_TOOLS = {"write_file", "edit_file"}
+
+# Playful status words shown while waiting for the first streamed token.
+_SPINNER_WORDS = (
+    "Pondering", "Brewing", "Conjuring", "Noodling", "Percolating",
+    "Ruminating", "Synthesizing", "Tinkering", "Musing", "Computing",
+    "Scheming", "Wrangling", "Cogitating", "Marinating", "Spelunking",
+)
 
 
 class PromptBlocked(RuntimeError):
@@ -71,6 +80,11 @@ class AgentLoop:
         self.context = ConversationContext(config=self.config)
         self.client = client or build_client(self.config)
         self.console = console or Console()
+
+        # Stream assistant text live (+ spinner). Off for subagents -- their
+        # output isn't shown to the user, and concurrent subagents would
+        # interleave on the console. Also skipped at call time for non-TTY output.
+        self._stream = (not _is_subagent) and getattr(self.config, "stream", True)
 
         # Skills: project-local + user-global. Loaded once; SubAgentSession
         # passes the same instance into child loops by reference (cheap copy).
@@ -150,8 +164,8 @@ class AgentLoop:
         final_text = ""
 
         for _turn in range(self.config.max_turns):
-            response = await self._call_llm()
-            self._render_response(response)
+            response, streamed = await self._call_llm()
+            self._render_response(response, streamed)
 
             if response.text_blocks:
                 final_text = "\n".join(response.text_blocks)
@@ -205,25 +219,89 @@ class AgentLoop:
             maybe("skill", lambda: SkillTool(self.skill_index))
         maybe("todo_write", lambda: TodoWriteTool(self.todo_store))
 
-    async def _call_llm(self) -> LLMResponse:
-        # Anthropic SDK call is sync; offload to a worker thread so concurrent
-        # tool dispatch from a previous turn isn't blocked. Same hook lets us
-        # later swap in AsyncAnthropic with a one-line change.
-        response = await asyncio.to_thread(
-            self.client.chat,
+    async def _call_llm(self) -> tuple[LLMResponse, bool]:
+        """Run one LLM call. Returns (response, streamed_text).
+
+        When `streamed_text` is True, the assistant's text was already printed
+        live, so the caller must not re-print it.
+        """
+        # The SDK call is sync; offload to a worker thread so we don't block the
+        # event loop (and so the spinner / stream consumer can run concurrently).
+        if not self._stream or not self.console.is_terminal:
+            response = await asyncio.to_thread(self._chat_blocking)
+            self._record_usage(response)
+            return response, False
+
+        loop = asyncio.get_running_loop()
+        queue: "asyncio.Queue[str | None]" = asyncio.Queue()
+
+        def on_text(delta: str) -> None:
+            # Runs in the worker thread -- hop back onto the loop thread safely.
+            loop.call_soon_threadsafe(queue.put_nowait, delta)
+
+        async def call() -> LLMResponse:
+            try:
+                return await asyncio.to_thread(self._chat_blocking, on_text)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)  # end sentinel
+
+        task = asyncio.create_task(call())
+
+        first = await self._spin_until_first_token(queue)
+        printed = False
+        if first is not None:
+            self._print_stream_text(first)
+            printed = True
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                self._print_stream_text(item)
+        if printed:
+            self.console.print()  # terminate the streamed line
+
+        response = await task
+        self._record_usage(response)
+        return response, printed
+
+    def _chat_blocking(self, on_text: "Callable[[str], None] | None" = None) -> LLMResponse:
+        return self.client.chat(
             messages=self.context.get_api_messages(),
             system=self.context.system_prompt,
             tools=self.registry.api_schemas(),
             model=self.config.model,
             max_tokens=self.config.max_tokens,
+            on_text=on_text,
         )
+
+    def _record_usage(self, response: LLMResponse) -> None:
         if response.usage:
             self.telemetry.record_chat(self.config.model, response.usage)
-        return response
 
-    def _render_response(self, response: LLMResponse) -> None:
+    async def _spin_until_first_token(self, queue: "asyncio.Queue[str | None]") -> str | None:
+        """Show a spinner with a rotating word until the first queue item lands.
+        Returns that item (a text delta, or None if the turn produced no text)."""
+        start = time.monotonic()
+        word = random.choice(_SPINNER_WORDS)
+        with self.console.status(f"[dim]{word}…[/dim]", spinner="dots") as status:
+            while True:
+                try:
+                    return await asyncio.wait_for(queue.get(), timeout=2.5)
+                except asyncio.TimeoutError:
+                    word = random.choice(_SPINNER_WORDS)
+                    elapsed = time.monotonic() - start
+                    status.update(f"[dim]{word}… ({elapsed:.0f}s)[/dim]")
+
+    def _print_stream_text(self, text: str) -> None:
+        # Model text is data, not Rich markup -- never let a stray "[" be parsed
+        # as a tag, and don't auto-highlight numbers/paths.
+        self.console.print(text, end="", markup=False, highlight=False, soft_wrap=True)
+
+    def _render_response(self, response: LLMResponse, streamed: bool = False) -> None:
         for block in response.raw_content:
             if block["type"] == "text":
+                if streamed:
+                    continue  # already printed live during streaming
                 self.console.print(block["text"], end="")
             elif block["type"] == "tool_use":
                 preview = str(block.get("input", ""))

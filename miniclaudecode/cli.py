@@ -60,6 +60,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--mode", choices=["ask", "auto", "plan"], default=None)
     p.add_argument("--max-turns", type=int, default=None)
     p.add_argument("--no-telemetry", action="store_true", help="Suppress the per-turn usage panel.")
+    p.add_argument("--no-stream", action="store_true",
+                   help="Disable live token streaming + spinner (wait for the full reply).")
     p.add_argument("--no-persist", action="store_true",
                    help="Do not auto-save the session after each turn.")
     p.add_argument("--resume", default=None,
@@ -100,6 +102,8 @@ def _build_config(args: argparse.Namespace, settings: dict[str, Any]) -> Config:
             pass
     if "compact_model" in settings:
         cfg.compact_model = str(settings["compact_model"])
+    if "stream" in settings and isinstance(settings["stream"], bool):
+        cfg.stream = settings["stream"]
     if "hooks" in settings and isinstance(settings["hooks"], dict):
         cfg.hooks = settings["hooks"]
     if "pricing" in settings and isinstance(settings["pricing"], dict):
@@ -137,6 +141,8 @@ def _build_config(args: argparse.Namespace, settings: dict[str, Any]) -> Config:
         cfg.permission_mode = PermissionMode(args.mode)
     if args.max_turns is not None:
         cfg.max_turns = args.max_turns
+    if getattr(args, "no_stream", False):
+        cfg.stream = False
 
     return cfg
 

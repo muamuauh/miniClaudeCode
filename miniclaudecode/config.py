@@ -33,6 +33,11 @@ class Config:
     max_turns: int = 30
     max_tokens: int = 8192
 
+    # Streaming: print assistant text token-by-token + show a spinner while
+    # waiting for the first token. Auto-disabled for non-TTY output and for
+    # subagents (their text isn't shown live). Toggle with --no-stream.
+    stream: bool = True
+
     # Context
     max_context_messages: int = 100
     max_output_chars: int = 50_000

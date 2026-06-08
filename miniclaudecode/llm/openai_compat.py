@@ -33,7 +33,7 @@ Provider quirks handled:
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
 from .base import LLMClient, LLMResponse, ToolCall
 
@@ -68,6 +68,7 @@ class OpenAICompatClient(LLMClient):
         tools: list[dict[str, Any]],
         model: str,
         max_tokens: int = 8192,
+        on_text: "Callable[[str], None] | None" = None,
     ) -> LLMResponse:
         oa_messages: list[dict[str, Any]] = []
         if system:
@@ -82,8 +83,121 @@ class OpenAICompatClient(LLMClient):
         if tools:
             kwargs["tools"] = self._to_openai_tools(tools)
 
+        if on_text is not None:
+            try:
+                return self._chat_streaming(kwargs, on_text)
+            except Exception:
+                # Some "OpenAI-compatible" proxies reject stream / stream_options.
+                # Fall back to a normal call so the turn still completes (just
+                # without live typing). Safe because nothing was printed yet on
+                # the failure path -- _chat_streaming only calls on_text after a
+                # delta successfully arrives.
+                pass
+
         response = self._client.chat.completions.create(**kwargs)
         return self._to_internal_response(response)
+
+    def _chat_streaming(
+        self,
+        kwargs: dict[str, Any],
+        on_text: "Callable[[str], None]",
+    ) -> LLMResponse:
+        """Stream chunks, forward text deltas, and reassemble an LLMResponse.
+
+        Tool-call arguments arrive fragmented across chunks (keyed by index), so
+        we accumulate them and parse once at the end -- mirroring the non-stream
+        path's defensive JSON handling.
+        """
+        stream_kwargs = dict(kwargs)
+        stream_kwargs["stream"] = True
+        # Ask for a trailing usage chunk; providers that support it give us
+        # accurate telemetry, others simply omit it.
+        stream_kwargs["stream_options"] = {"include_usage": True}
+
+        text_acc = ""
+        # index -> {"id", "name", "args"}
+        tool_acc: dict[int, dict[str, str]] = {}
+        usage: dict[str, int] = {}
+        finish = ""
+
+        for chunk in self._client.chat.completions.create(**stream_kwargs):
+            usage_obj = getattr(chunk, "usage", None)
+            if usage_obj is not None:
+                usage = {
+                    "input_tokens": int(getattr(usage_obj, "prompt_tokens", 0) or 0),
+                    "output_tokens": int(getattr(usage_obj, "completion_tokens", 0) or 0),
+                }
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = getattr(choice, "delta", None)
+            if delta is not None:
+                content = getattr(delta, "content", None)
+                if content:
+                    text_acc += content
+                    on_text(content)
+                for tc in (getattr(delta, "tool_calls", None) or []):
+                    idx = getattr(tc, "index", 0) or 0
+                    slot = tool_acc.setdefault(idx, {"id": "", "name": "", "args": ""})
+                    if getattr(tc, "id", None):
+                        slot["id"] = tc.id
+                    fn = getattr(tc, "function", None)
+                    if fn is not None:
+                        if getattr(fn, "name", None):
+                            slot["name"] = fn.name
+                        if getattr(fn, "arguments", None):
+                            slot["args"] += fn.arguments
+            if getattr(choice, "finish_reason", None):
+                finish = choice.finish_reason
+
+        return self._assemble_streamed(text_acc, tool_acc, usage, finish)
+
+    @staticmethod
+    def _assemble_streamed(
+        text: str,
+        tool_acc: dict[int, dict[str, str]],
+        usage: dict[str, int],
+        finish: str,
+    ) -> LLMResponse:
+        text_blocks: list[str] = []
+        tool_calls: list[ToolCall] = []
+        raw: list[dict[str, Any]] = []
+
+        if text:
+            text_blocks.append(text)
+            raw.append({"type": "text", "text": text})
+
+        for idx in sorted(tool_acc):
+            slot = tool_acc[idx]
+            args_raw = slot.get("args") or ""
+            try:
+                parsed = json.loads(args_raw) if args_raw else {}
+            except json.JSONDecodeError:
+                parsed = {}
+            if not isinstance(parsed, dict):
+                parsed = {"value": parsed}
+            tool_calls.append(ToolCall(id=slot.get("id", ""), name=slot.get("name", ""), input=parsed))
+            raw.append({
+                "type": "tool_use",
+                "id": slot.get("id", ""),
+                "name": slot.get("name", ""),
+                "input": parsed,
+            })
+
+        stop_reason = {
+            "tool_calls": "tool_use",
+            "stop": "end_turn",
+            "length": "max_tokens",
+        }.get(finish or "", finish or "")
+
+        return LLMResponse(
+            text_blocks=text_blocks,
+            tool_calls=tool_calls,
+            raw_content=raw,
+            stop_reason=stop_reason,
+            usage=usage,
+        )
 
     # ---------- inbound translation ----------
 

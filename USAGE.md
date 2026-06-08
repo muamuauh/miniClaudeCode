@@ -96,10 +96,23 @@ python -m miniclaudecode --base-url https://api.deepseek.com/v1 --api-key sk-xxx
 | **Hooks** | `settings.json` 的 `hooks` | 工具执行前后/收到输入时跑自定义 shell 命令，可拦截/改写 |
 | **SubAgent** | 模型自动调用 `task` 工具 | 把子任务派给隔离上下文的子代理，可并行 |
 
-## 7. 常用运维
+## 7. 流式输出 & 反馈
+
+交互式 REPL 默认**流式输出**：等待首个 token 时显示 spinner + 滚动文案（`Pondering… (3s)`），
+首 token 到达后文字逐块出现，像打字机一样。
+
+- 自动关闭场景：输出被重定向/管道（非 TTY）、subagent（其文本不直接展示）
+- 手动关闭：`--no-stream`，或在 `settings.json` 里设 `"stream": false`
+- 推理(thinking)模型（如 qwen3.7-max）会先有一段"思考"停顿（spinner 转圈），思考完答案再流式吐出
 
 ```powershell
-pytest -q                                       # 跑测试（131 个）
+python -m miniclaudecode --no-stream "..."      # 等整段生成完再一次性输出
+```
+
+## 8. 常用运维
+
+```powershell
+pytest -q                                       # 跑测试
 python -m miniclaudecode --no-telemetry "..."   # 关掉成本面板
 python -m miniclaudecode --no-persist "..."     # 不自动存会话
 ```
