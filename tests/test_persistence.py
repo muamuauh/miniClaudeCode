@@ -11,6 +11,7 @@ from miniclaudecode.config import Config, PermissionMode
 from miniclaudecode.llm.base import LLMClient, LLMResponse
 from miniclaudecode.persistence.session import (
     SessionStore,
+    list_project_sessions,
     list_sessions,
     load_session,
     restore_into,
@@ -103,6 +104,65 @@ def test_list_sessions_returns_summaries_newest_first(tmp_path: Path):
     # at minimum should have the expected keys.
     for entry in items:
         assert {"id", "model", "provider", "created_at", "updated_at", "message_count"} <= entry.keys()
+
+
+def test_summary_is_first_user_message(tmp_path: Path):
+    agent = _agent(tmp_path)
+    agent.context.add_user_message("find all TODO comments")
+    agent.context.add_assistant_message([{"type": "text", "text": "sure"}])
+    agent.context.add_user_message("and the FIXMEs too")
+
+    store = SessionStore(base_dir=tmp_path)
+    store.record(agent)
+    snapshot = load_session(store.id, base_dir=tmp_path)
+    assert snapshot["summary"] == "find all TODO comments"
+    assert list_sessions(base_dir=tmp_path)[0]["summary"] == "find all TODO comments"
+
+
+def test_summary_truncates_long_prompts(tmp_path: Path):
+    agent = _agent(tmp_path)
+    agent.context.add_user_message("x" * 200)
+    store = SessionStore(base_dir=tmp_path)
+    store.record(agent)
+    summary = load_session(store.id, base_dir=tmp_path)["summary"]
+    assert len(summary) == 80 and summary.endswith("…")
+
+
+def test_project_registry_records_sessions(tmp_path: Path):
+    proj = tmp_path / "proj"
+    a = _agent(tmp_path)
+    a.context.add_user_message("first task")
+    SessionStore(base_dir=tmp_path, project_dir=proj).record(a)
+
+    b = _agent(tmp_path)
+    b.context.add_user_message("second task")
+    b.context.add_assistant_message([{"type": "text", "text": "ok"}])
+    SessionStore(base_dir=tmp_path, project_dir=proj).record(b)
+
+    entries = list_project_sessions(project_dir=proj)
+    assert len(entries) == 2
+    titles = {e["title"] for e in entries}
+    assert titles == {"first task", "second task"}
+    for e in entries:
+        assert {"id", "title", "updated_at", "model", "provider", "message_count"} <= e.keys()
+
+
+def test_project_registry_upserts_same_session(tmp_path: Path):
+    proj = tmp_path / "proj"
+    agent = _agent(tmp_path)
+    agent.context.add_user_message("task")
+    store = SessionStore(base_dir=tmp_path, project_dir=proj)
+    store.record(agent)
+    store.record(agent)  # same id again -> upsert, not duplicate
+    assert len(list_project_sessions(project_dir=proj)) == 1
+
+
+def test_project_registry_untouched_without_project_dir(tmp_path: Path):
+    proj = tmp_path / "proj"
+    agent = _agent(tmp_path)
+    agent.context.add_user_message("hi")
+    SessionStore(base_dir=tmp_path).record(agent)  # project_dir=None
+    assert list_project_sessions(project_dir=proj) == []
 
 
 def test_todos_round_trip(tmp_path: Path):

@@ -12,6 +12,7 @@ Snapshot shape:
       "model": "claude-sonnet-4-5",
       "provider": "anthropic",
       "profile": "anthropic",
+      "summary": "find all TODOs",   // first user message, truncated (used as a title)
       "system_prompt": "...",
       "messages": [...],            // ConversationContext.messages verbatim
       "compactions": 2,
@@ -23,6 +24,11 @@ Snapshot shape:
 The CLI exposes `/resume <id>` which calls `load_session` and reconstructs the
 context. Tool registries / hooks / skills are NOT serialized -- those are
 re-derived from the current settings.json on resume.
+
+Project registry: snapshots live in one global folder, but a `SessionStore`
+given a `project_dir` also appends a lightweight entry (id, title, updated_at,
+model) to `{project_dir}/sessions.json`. That lets `/sessions` show "sessions
+touched from this working directory" separately from the global list.
 """
 from __future__ import annotations
 
@@ -40,6 +46,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 SESSION_DIR = Path.home() / ".miniclaudecode" / "sessions"
+PROJECT_REGISTRY_NAME = "sessions.json"
 
 
 class SessionStore:
@@ -48,11 +55,22 @@ class SessionStore:
     AgentLoop holds at most one. Calling `record(agent)` after each user
     turn keeps the on-disk snapshot fresh. Construction is cheap (no IO);
     the directory is created lazily on first save.
+
+    If `project_dir` is set, each save also registers this session in
+    `{project_dir}/sessions.json` so `/sessions` can list the sessions that
+    belong to this working directory. Left None (the default used by tests and
+    one-shot saves) the registry is never touched.
     """
 
-    def __init__(self, session_id: str | None = None, base_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        session_id: str | None = None,
+        base_dir: Path | None = None,
+        project_dir: Path | None = None,
+    ) -> None:
         self.id = session_id or _new_session_id()
         self.base_dir = base_dir or SESSION_DIR
+        self.project_dir = project_dir
         self.created_at = _utcnow_iso()
 
     @property
@@ -62,7 +80,22 @@ class SessionStore:
     def record(self, agent: "AgentLoop") -> Path:
         """Atomically write a snapshot of `agent` to disk."""
         snapshot = _serialize(agent, self.id, self.created_at)
-        return _write_atomic(self.path, snapshot)
+        path = _write_atomic(self.path, snapshot)
+        if self.project_dir is not None:
+            # Best-effort: a broken registry must never sink the real save.
+            try:
+                record_project_session(
+                    self.project_dir,
+                    session_id=self.id,
+                    title=snapshot.get("summary", ""),
+                    updated_at=snapshot["updated_at"],
+                    model=snapshot.get("model"),
+                    provider=snapshot.get("provider"),
+                    message_count=len(snapshot.get("messages") or []),
+                )
+            except Exception:
+                pass
+        return path
 
 
 def save_session(agent: "AgentLoop", store: SessionStore | None = None) -> SessionStore:
@@ -98,10 +131,60 @@ def list_sessions(base_dir: Path | None = None) -> list[dict[str, Any]]:
             "model": data.get("model"),
             "provider": data.get("provider"),
             "profile": data.get("profile"),
+            "summary": data.get("summary") or "",
             "created_at": data.get("created_at"),
             "updated_at": data.get("updated_at"),
             "message_count": len(data.get("messages") or []),
         })
+    out.sort(key=lambda d: d.get("updated_at") or "", reverse=True)
+    return out
+
+
+# ---------- project-local session registry ----------
+
+def _project_dir_or_cwd(project_dir: Path | None) -> Path:
+    return Path(project_dir) if project_dir is not None else (Path.cwd() / ".miniclaudecode")
+
+
+def _registry_path(project_dir: Path | None) -> Path:
+    return _project_dir_or_cwd(project_dir) / PROJECT_REGISTRY_NAME
+
+
+def _read_registry(project_dir: Path | None) -> dict[str, Any]:
+    try:
+        data = json.loads(_registry_path(project_dir).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def record_project_session(
+    project_dir: Path,
+    *,
+    session_id: str,
+    title: str,
+    updated_at: str,
+    model: str | None = None,
+    provider: str | None = None,
+    message_count: int = 0,
+) -> Path:
+    """Upsert this session's entry into `{project_dir}/sessions.json`."""
+    reg = _read_registry(project_dir)
+    reg[session_id] = {
+        "title": title,
+        "updated_at": updated_at,
+        "model": model,
+        "provider": provider,
+        "message_count": message_count,
+    }
+    return _write_atomic(_registry_path(project_dir), reg)
+
+
+def list_project_sessions(project_dir: Path | None = None) -> list[dict[str, Any]]:
+    """Sessions touched from this working directory, newest-first. Each dict
+    carries its id plus the registered title/updated_at/model/provider/count."""
+    reg = _read_registry(project_dir)
+    out = [{"id": sid, **entry} for sid, entry in reg.items() if isinstance(entry, dict)]
     out.sort(key=lambda d: d.get("updated_at") or "", reverse=True)
     return out
 
@@ -123,6 +206,7 @@ def _serialize(agent: "AgentLoop", session_id: str, created_at: str) -> dict[str
         "provider": cfg.provider.value,
         "profile": cfg.profile_name,
         "permission_mode": cfg.permission_mode.value,
+        "summary": _summarize(agent.context.messages),
         "system_prompt": agent.context.system_prompt,
         "messages": agent.context.messages,
         "compactions": agent.context.compactions,
@@ -174,6 +258,35 @@ def restore_into(agent: "AgentLoop", snapshot: dict[str, Any]) -> None:
 
 
 # ---------- helpers ----------
+
+def _summarize(messages: list[Any], limit: int = 80) -> str:
+    """Title for a session = its first user message, whitespace-collapsed and
+    truncated. Cheap (no LLM) and stable, which is all the listing needs."""
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        text = _content_text(msg.get("content"))
+        if text:
+            text = " ".join(text.split())
+            return text if len(text) <= limit else text[: limit - 1] + "…"
+    return ""
+
+
+def _content_text(content: Any) -> str:
+    """Plain text from a message's content (str, or Anthropic block list).
+    Skips non-text blocks (tool_use / tool_result) so a tool-only first turn
+    doesn't yield a junk title."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        ]
+        return " ".join(p for p in parts if p)
+    return ""
+
 
 def _utcnow_iso() -> str:
     return datetime.utcnow().isoformat(timespec="seconds")

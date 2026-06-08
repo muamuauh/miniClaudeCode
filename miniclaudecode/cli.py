@@ -3,15 +3,18 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 
 from .agent_loop import AgentLoop, PromptBlocked
 from .config import Config, LLMProvider, PermissionMode
 from .persistence.session import (
     SessionStore,
+    list_project_sessions,
     list_sessions,
     load_session,
     restore_into,
@@ -189,6 +192,49 @@ def run_interactive(
             console.print(f"\n[red]Error:[/red] {exc}")
 
 
+def _print_sessions(console: Console, *, project_limit: int = 15, global_limit: int = 10) -> None:
+    """Two stacked sections: sessions touched from this working directory first,
+    then the most recent sessions saved anywhere. Each row leads with a title."""
+    cwd = Path.cwd()
+
+    proj = list_project_sessions()
+    console.print()
+    if proj:
+        ptable = Table(title=f"This project  ({cwd})", title_justify="left",
+                       header_style="bold", show_edge=False, pad_edge=False)
+        ptable.add_column("Title", style="white", max_width=50)
+        ptable.add_column("Session ID", style="cyan", no_wrap=True)
+        ptable.add_column("Updated", style="dim", no_wrap=True)
+        ptable.add_column("Msgs", justify="right")
+        for e in proj[:project_limit]:
+            ptable.add_row(e.get("title") or "(empty)", e["id"],
+                           e.get("updated_at", "?"), str(e.get("message_count", "?")))
+        console.print(ptable)
+    else:
+        console.print(f"[bold]This project[/bold] [dim]({cwd})[/dim]")
+        console.print("  [dim](no sessions started here yet)[/dim]")
+
+    glob = list_sessions()
+    console.print()
+    if glob:
+        shown = min(len(glob), global_limit)
+        gtable = Table(title=f"All saved sessions  (newest {shown} of {len(glob)})",
+                       title_justify="left", header_style="bold", show_edge=False, pad_edge=False)
+        gtable.add_column("Title", style="white", max_width=50)
+        gtable.add_column("Session ID", style="cyan", no_wrap=True)
+        gtable.add_column("Updated", style="dim", no_wrap=True)
+        gtable.add_column("Model", style="dim")
+        for e in glob[:global_limit]:
+            gtable.add_row(e.get("summary") or "(empty)", e["id"],
+                           e.get("updated_at", "?"),
+                           f"{e.get('provider', '?')}/{e.get('model', '?')}")
+        console.print(gtable)
+    else:
+        console.print("[dim](no saved sessions)[/dim]")
+
+    console.print("\n[dim]Resume any with /resume <id>[/dim]")
+
+
 def _handle_slash(
     line: str,
     agent: AgentLoop,
@@ -269,18 +315,7 @@ def _handle_slash(
         return True, None
 
     if cmd == "/sessions":
-        items = list_sessions()
-        if not items:
-            console.print("[dim](no saved sessions)[/dim]")
-            return True, None
-        console.print("\n[bold]Saved sessions (newest first):[/bold]")
-        for entry in items[:30]:
-            console.print(
-                f"  [cyan]{entry['id']}[/cyan]  "
-                f"[dim]{entry.get('updated_at', '?')}[/dim]  "
-                f"{entry.get('provider', '?')}/{entry.get('model', '?')}  "
-                f"msgs={entry.get('message_count', '?')}"
-            )
+        _print_sessions(console)
         return True, None
 
     if cmd == "/resume":
@@ -362,7 +397,8 @@ def main(argv: list[str] | None = None) -> int:
     # Session persistence: opt-out via --no-persist. If --resume <id> is given,
     # restore into the freshly built agent before the REPL starts.
     persist = not args.no_persist
-    session_store = SessionStore() if persist else None
+    project_dir = Path.cwd() / ".miniclaudecode"
+    session_store = SessionStore(project_dir=project_dir) if persist else None
 
     if args.resume:
         try:

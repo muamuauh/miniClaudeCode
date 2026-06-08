@@ -10,6 +10,9 @@ dist/
 *.log
 ~/.miniclaudecode/sessions/
 
+# Per-project session registry (machine-local; references global snapshots)
+.miniclaudecode/sessions.json
+
 # Secrets -- the file may contain real API keys. The committed `.env.example`
 # is the template.
 .env

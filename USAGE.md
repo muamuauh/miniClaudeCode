@@ -48,11 +48,19 @@ python -m miniclaudecode --mode auto "把所有 print 改成 logging"
 /usage                      当前 token & 成本统计
 /profile                    当前激活的 LLM (provider, model, base_url)
 /todos                      查看任务清单
-/sessions                   最近 30 个会话
-/resume <id>                恢复某会话
+/sessions                   会话列表（分两段，见下）
+/resume <id>                按 id 精确恢复某会话
 /save                       手动存档
 /quit                       退出
 ```
+
+`/sessions` 分两段显示，每行以**标题**（该会话的第一句话）开头：
+
+1. **本项目的会话** — 从当前工作目录启动过的会话，记录在
+   `./.miniclaudecode/sessions.json`（机器本地，已 gitignore）
+2. **全局保存的会话** — 所有项目的会话，过多时只列最近 10 条
+
+恢复用 `/resume <id>`（从上面任一段复制 id）。
 
 ## 5. 换 / 切 LLM
 
