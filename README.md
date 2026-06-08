@@ -7,6 +7,8 @@ Session 持久化 / Slash 命令模板 / Diff 预览**。
 
 设计目标：核心代码 ≤ ~3000 行，每一处都讲清楚为什么这样写。
 
+> 🚀 详细使用见 [USAGE.md](USAGE.md)（Windows + miniconda 实操指南）。
+
 📚 **文档**（[docs/](docs/) 下的索引见 [docs/README.md](docs/README.md)）：
 
 - [架构图](docs/architecture.md) — 模块责任划分 + 扩展点
