@@ -70,22 +70,54 @@ harness ignores.)
 | `--keep-clones` | keep temp clones for debugging |
 | `--verbose` | stream live agent output |
 
-## Stage 2 — score with the official harness (Docker)
+## Stage 2 — score the predictions
 
-```powershell
-python -m swebench.harness.run_evaluation `
-  --dataset_name princeton-nlp/SWE-bench_Lite `
-  --predictions_path evals/swebench/out/predictions.jsonl `
-  --max_workers 4 `
+The grader computes the **resolved rate** (the headline SWE-bench metric): it
+applies each model patch + the gold test patch in a per-repo Docker image and
+runs the target tests.
+
+> ⚠️ **Windows note.** The official `swebench` harness does **not run natively on
+> Windows** — it does `import resource` (a Unix-only stdlib module) at import
+> time, so `python -m swebench.harness.run_evaluation` fails with
+> `ModuleNotFoundError: No module named 'resource'` before Docker is ever
+> touched. Use one of the two paths below.
+
+### Option A — WSL2 (local Docker scoring)
+
+Docker Desktop shares its daemon with WSL2, so run the harness from inside an
+Ubuntu WSL2 shell:
+
+```bash
+# inside WSL2 (Ubuntu)
+pip install swebench
+cd /mnt/e/codes/miniClaudeCode
+python -m swebench.harness.run_evaluation \
+  --dataset_name princeton-nlp/SWE-bench_Lite \
+  --predictions_path evals/swebench/out/predictions.jsonl \
+  --max_workers 4 \
   --run_id mcc-run
 ```
 
-This builds/pulls a Docker image per repo (large, slow the first time), applies
-each patch, and runs the target tests. It writes a report JSON with the
-**resolved rate** (the headline SWE-bench metric) and per-instance results.
+First run builds/pulls a Docker image per repo (large, slow). It writes a report
+JSON with the resolved rate and per-instance results.
 
-Start with `--gold` predictions to confirm your Docker setup scores them ~100%
-resolved before spending tokens on real runs.
+### Option B — sb-cli (cloud scoring, no local Docker)
+
+The SWE-bench team hosts a cloud evaluator — easiest on Windows:
+
+```powershell
+pip install sb-cli
+# get a free API key: https://www.swebench.com/sb-cli/
+sb-cli submit swe-bench_lite test --predictions_path evals/swebench/out/predictions.jsonl
+```
+
+It runs the same evaluation server-side and returns the resolved rate.
+
+### Sanity-gate with --gold first
+
+Before spending tokens on real runs, score the `--gold` predictions — they
+should come back ~100% resolved. If they don't, your scoring setup (not the
+agent) is the problem.
 
 ## Cost & scope notes
 
