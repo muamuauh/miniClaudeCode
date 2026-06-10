@@ -19,6 +19,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+# SWE-bench Lite adapter: `datasets` loads the tasks (stage 1). Scoring (stage 2)
+# additionally needs `pip install swebench` + Docker -- kept out of here since it
+# pulls heavy deps and isn't importable in-process.
+swebench = ["datasets>=2.16"]
 
 [project.scripts]
 miniclaudecode = "miniclaudecode.cli:main"

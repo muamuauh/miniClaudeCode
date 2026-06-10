@@ -15,6 +15,7 @@ dist/
 
 # Eval run reports
 evals/reports/
+evals/swebench/out/
 
 # Secrets -- the file may contain real API keys. The committed `.env.example`
 # is the template.
