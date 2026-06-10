@@ -1,0 +1,17 @@
+name: create_greet
+description: Create a new file from scratch that satisfies a provided test.
+prompt: |
+  创建 greet.py，实现一个函数 greet(name)，返回字符串 "Hello, <name>!"。
+  让 test_greet.py 通过。
+files:
+  test_greet.py: |
+    from greet import greet
+
+
+    def test_greet():
+        assert greet("World") == "Hello, World!"
+        assert greet("Bob") == "Hello, Bob!"
+checks:
+  - cmd: python -m pytest -q
+  - file: greet.py
+    exists: true

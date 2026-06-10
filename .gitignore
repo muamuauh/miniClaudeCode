@@ -13,6 +13,9 @@ dist/
 # Per-project session registry (machine-local; references global snapshots)
 .miniclaudecode/sessions.json
 
+# Eval run reports
+evals/reports/
+
 # Secrets -- the file may contain real API keys. The committed `.env.example`
 # is the template.
 .env

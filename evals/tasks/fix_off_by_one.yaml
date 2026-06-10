@@ -1,0 +1,21 @@
+name: fix_off_by_one
+description: Fix an off-by-one bug so the existing test passes.
+prompt: |
+  calc.py 里的 add(a, b) 有个 off-by-one bug：它返回 a + b + 1。
+  请修正它，让它返回正确的和。不要修改 test_calc.py。
+files:
+  calc.py: |
+    def add(a, b):
+        return a + b + 1
+  test_calc.py: |
+    from calc import add
+
+
+    def test_add():
+        assert add(2, 3) == 5
+        assert add(0, 0) == 0
+        assert add(-1, 1) == 0
+checks:
+  - cmd: python -m pytest -q
+  - file: calc.py
+    not_contains: "a + b + 1"
