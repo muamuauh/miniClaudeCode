@@ -16,6 +16,7 @@ dist/
 # Eval run reports
 evals/reports/
 evals/swebench/out/
+sb-cli-reports/
 
 # Secrets -- the file may contain real API keys. The committed `.env.example`
 # is the template.
