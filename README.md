@@ -24,6 +24,9 @@ Session 持久化 / Slash 命令模板 / Diff 预览**。
 - [x] **P3** Subagent + Skill + TodoWrite（深度上限 2、上下文隔离、并行 Task、按需 skill 加载）
 - [x] **P4** Hooks + Context 压缩 + Token/成本 Telemetry + settings.json 分层加载
 - [x] **P5** 多 provider profiles（Anthropic / OpenAI 兼容）+ `.env` 加载 + WebFetch + Session 持久化 + Slash 命令模板 + Diff 预览
+- [x] **P6** 实时 token 流式输出 + 等待 spinner + per-project session registry（分区 `/sessions`）+ 执行式 eval 框架 + SWE-bench Lite 适配器
+
+测试：`149 passed`（`pytest -q`）。
 
 ## 环境
 
@@ -252,18 +255,48 @@ allowed_tools: [glob, grep, read_file]
 一个 turn 内多个 `task` 调用会被父循环的 `asyncio.gather` 并发派发，结果按
 原 `tool_use` 顺序回填。
 
+## 流式输出（P6）
+
+REPL 里每个 turn 的模型输出实时逐 token 打印，工具调用前显示等待 spinner。
+eval / subagent / 一次性 prompt 场景默认关流式（拿完整结果更省事）。
+
+## 评测（P6）
+
+两套执行式评测,都复用 CLI 的 LLM 配置（`.env` + `settings.json` + `--profile`）：
+
+- **mini eval 框架** [`evals/`](evals/)：每个 task 描述「起始工作区 + prompt + 检查项」，
+  runner 建目录、跑真实 agent、执行检查（`cmd` 退出码 / 文件 `contains` 断言），
+  输出 pass-rate / token / 成本。全通过才 exit 0（可挂 CI）。
+
+  ```bash
+  python -m evals.runner                 # 跑 evals/tasks 下全部
+  python -m evals.runner --filter slug --profile deepseek
+  ```
+
+- **SWE-bench Lite 适配器** [`evals/swebench/`](evals/swebench/)：两阶段流程。stage-1
+  在本地克隆仓库 @ base_commit、跑 agent、`git diff` 生成 `predictions.jsonl`（原生
+  可跑）；stage-2 用官方 harness 在 Docker 里评分。
+
+  ```bash
+  python -m evals.swebench.run_swebench --gold --limit 5   # 无 LLM 冒烟测全链路
+  python -m evals.swebench.run_swebench --limit 1
+  ```
+
+  > ⚠️ 官方 `swebench` 评分 harness 在 Windows 原生跑不了（`import resource`）。
+  > 走 **WSL2** 或 **sb-cli 云评分**，详见 [`evals/swebench/README.md`](evals/swebench/README.md)。
+
 ## 测试
 
 ```bash
-pytest -q
+pytest -q          # 149 passed
 ```
 
-## 目录结构（P1–P5）
+## 目录结构（P1–P6）
 
 ```
 miniclaudecode/
-├── agent_loop.py        # async 主循环 + 并行 dispatch + hooks + 压缩 + telemetry + diff 确认
-├── cli.py               # Rich REPL + .env/settings 加载 + 11 个 slash 命令 + /resume
+├── agent_loop.py        # async 主循环 + 并行 dispatch + hooks + 压缩 + telemetry + diff 确认 + 流式
+├── cli.py               # Rich REPL + .env/settings 加载 + slash 命令 + /resume + spinner
 ├── config.py            # Config + (provider, model, base_url, api_key) 四元组 + profile_name
 ├── context.py           # 消息缓冲 + CLAUDE.md + token-aware 压缩
 ├── permissions.py       # 2 层权限门
@@ -294,6 +327,12 @@ miniclaudecode/
     ├── skill_tool.py        # 按需取 skill body
     ├── task_tool.py         # 派发 subagent
     └── todo_write.py        # 内存 todo + Rich 表格渲染
+
+evals/                       # P6 执行式评测
+├── runner.py            # task → 建工作区 → 跑 agent → 检查 → pass-rate/token/成本
+├── tasks/*.yaml         # 本地 task（起始文件 + prompt + 检查项）
+└── swebench/
+    └── run_swebench.py  # SWE-bench Lite stage-1（克隆 → 跑 agent → predictions.jsonl）
 ```
 
 ## Session 持久化（P5）

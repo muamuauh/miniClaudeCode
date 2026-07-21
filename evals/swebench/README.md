@@ -82,26 +82,70 @@ runs the target tests.
 > `ModuleNotFoundError: No module named 'resource'` before Docker is ever
 > touched. Use one of the two paths below.
 
-### Option A — WSL2 (local Docker scoring)
+### Option A — WSL2 (local Docker scoring) ✅ verified path
 
-Docker Desktop shares its daemon with WSL2, so run the harness from inside an
-Ubuntu WSL2 shell:
+This is the path we actually got working (sb-cli, Option B below, returned 0% even
+for gold reference patches — treat it as unreliable). Docker Desktop shares its
+daemon with WSL2, so run the official harness from inside an Ubuntu WSL2 shell.
+
+**One-time setup inside WSL2 (Ubuntu):**
 
 ```bash
-# inside WSL2 (Ubuntu)
-pip install swebench
-cd /mnt/e/codes/miniClaudeCode
-python -m swebench.harness.run_evaluation \
-  --dataset_name princeton-nlp/SWE-bench_Lite \
-  --predictions_path evals/swebench/out/predictions.jsonl \
-  --max_workers 4 \
-  --run_id mcc-run
+# Ubuntu 24.04 ships no pip/ensurepip and marks system python externally-managed;
+# sudo may need a password. Bootstrap an isolated venv without any of that:
+python3 -m venv --without-pip ~/sweb-venv
+curl -fsSL https://bootstrap.pypa.io/get-pip.py | ~/sweb-venv/bin/python
+~/sweb-venv/bin/python -m pip install swebench datasets
 ```
 
-First run builds/pulls a Docker image per repo (large, slow). It writes a report
-JSON with the resolved rate and per-instance results.
+**Score (run from `$HOME`, not `/mnt/...`, so logs land on fast ext4):**
 
-### Option B — sb-cli (cloud scoring, no local Docker)
+```bash
+# If behind a localhost proxy (e.g. Clash), point the harness at it — the harness
+# fetches each repo's requirements from raw.githubusercontent.com, which the GFW
+# resets. With WSL mirrored networking the host proxy is reachable at 127.0.0.1.
+export HTTPS_PROXY=http://127.0.0.1:7897 HTTP_PROXY=http://127.0.0.1:7897
+
+cd ~
+~/sweb-venv/bin/python -m swebench.harness.run_evaluation \
+  --dataset_name princeton-nlp/SWE-bench_Lite \
+  --predictions_path /mnt/e/codes/miniClaudeCode/evals/swebench/out/predictions.jsonl \
+  --max_workers 4 --run_id mcc-run --cache_level env
+```
+
+First run builds a Docker image per repo (large, slow; ~14 min for astropy). It
+writes per-instance `report.json` files under
+`~/logs/run_evaluation/<run_id>/<model>/<instance_id>/` and, if the summary step
+succeeds, a top-level report with the resolved rate.
+
+**Gotchas we hit (Windows + China network):**
+
+- *Docker CLI must be on PATH:* invoke scripts with a **login shell**
+  (`wsl -d Ubuntu-24.04 -- bash -l script.sh`); a plain `bash script.sh` gives
+  "docker: command not found".
+- *Docker Desktop WSL integration is flaky here:* a localhost proxy in NAT mode
+  breaks the integration bootstrap (0-byte `docker-desktop-user-distro` proxy →
+  "Permission denied"/"Exec format error" dialogs). Fix by putting
+  `[wsl2]\nnetworkingMode=mirrored\nautoProxy=true` in `%USERPROFILE%\.wslconfig`.
+  It still resets on distro re-init / Docker Desktop updates — recover with
+  `wsl --shutdown`, kill+relaunch Docker Desktop, then run the harness immediately
+  in one continuous session.
+- *The summary step can crash* (`make_run_report` fetches every repo's
+  requirements from raw.githubusercontent.com). The eval itself still finishes and
+  the per-instance `report.json` files are valid — summarize them directly:
+
+  ```bash
+  python3 /mnt/e/codes/miniClaudeCode/evals/swebench/summarize_reports.py --run-id mcc-run
+  ```
+
+### Option B — sb-cli (cloud scoring, no local Docker) ⚠️ unreliable here
+
+> **In our testing (2026-07) sb-cli scored 0% even for verbatim gold reference
+> patches**, across multiple runs — i.e. its results were meaningless, and
+> `get-report` intermittently 500s. Gold patches must score ~100% if scoring
+> works, so we treat sb-cli as broken for this setup and use Option A. Try it if
+> you like, but **gold-gate it first** and don't trust any number until gold comes
+> back ~100%.
 
 The SWE-bench team hosts a cloud evaluator — easiest on Windows:
 
@@ -129,3 +173,23 @@ agent) is the problem.
   edits are still captured in the diff but the harness resets tests to gold.
 - For a quick offline pipeline check (no network/LLM), see
   `tests/test_swebench_adapter.py`.
+
+## Results so far
+
+Scored locally with the official harness via Option A (WSL2). Small samples — not
+statistically significant, but a real, reproducible signal:
+
+| run | agent / model | resolved | notes |
+|---|---|---|---|
+| gold-gate | gold reference | 1/1 | proves the local scoring chain works |
+| agent-3 | miniclaudecode · qwen3.7-max | 2/3 | astropy-12907 ✅, 14182 ✅, 14365 ❌ |
+| **agent-10** | miniclaudecode · qwen3.7-max | **5/10 (50%)** | first 10 of the dataset (6 astropy + 4 django) |
+
+agent-10 breakdown — resolved: astropy-12907, astropy-14995, astropy-6938,
+django-10914, django-11001; unresolved: astropy-14182, astropy-14365, astropy-7746,
+django-10924, django-11019. **All 10 patches applied cleanly**
+(`patch_successfully_applied: true`), so misses are logic, not malformed diffs.
+
+Predictions are non-deterministic (astropy-14182 resolved in agent-3 but not in the
+agent-10 regeneration). The same patches scored 0% via sb-cli (Option B) — a
+broken-cloud artifact, not the agent.
