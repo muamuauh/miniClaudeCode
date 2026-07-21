@@ -184,11 +184,20 @@ agent) is the problem.
 Scored locally with the official harness via Option A (WSL2). Small samples — not
 statistically significant, but a real, reproducible signal:
 
-| run | agent / model | resolved | notes |
-|---|---|---|---|
-| gold-gate | gold reference | 1/1 | proves the local scoring chain works |
-| agent-3 | miniclaudecode · qwen3.7-max | 2/3 | astropy-12907 ✅, 14182 ✅, 14365 ❌ |
-| **agent-10** | miniclaudecode · qwen3.7-max | **5/10 (50%)** | first 10 of the dataset (6 astropy + 4 django) |
+| run | agent / model | resolved | avg in-tok/inst | notes |
+|---|---|---|---|---|
+| gold-gate | gold reference | 1/1 | — | proves the local scoring chain works |
+| agent-3 | miniclaudecode · qwen3.7-max | 2/3 | — | astropy-12907 ✅, 14182 ✅, 14365 ❌ |
+| agent-10 | miniclaudecode · qwen3.7-max | 5/10 (50%) | 169k | first 10 of the dataset (6 astropy + 4 django) |
+| **kimi-10** | miniclaudecode · kimi-k3 | **9/10 (90%)** | 331k | same 10 instances; only missed astropy-7746 |
+
+**Model comparison (same agent, same 10 instances).** kimi-k3 resolved 9/10 vs
+qwen3.7-max's 5/10 — the scaffold is identical, so this is a model-quality gap, not
+an agent gap. kimi costs it: ~331k vs ~169k input tokens/instance (~2× the tokens for
+~2× the resolve rate). The two even fail differently: qwen's *unresolved* runs burn
+the most tokens (thrash → give up), whereas kimi's *resolved* runs are its priciest
+(it grinds — two even hit the 40-turn cap and still resolved). Takeaway: on this
+sample the bottleneck is the model, not the harness/prompt.
 
 agent-10 breakdown — resolved: astropy-12907, astropy-14995, astropy-6938,
 django-10914, django-11001; unresolved: astropy-14182, astropy-14365, astropy-7746,
