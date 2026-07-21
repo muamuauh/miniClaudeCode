@@ -70,16 +70,26 @@ def summarize(
     max_turns: int | None = None,
 ) -> dict:
     predictions = predictions or {}
+    reports = {r["instance_id"]: r for r in (load_report(p) for p in find_reports(logs_dir))}
+
+    # An instance whose patch was empty never gets a report — the harness has
+    # nothing to apply. Those still count as unresolved in the SWE-bench metric,
+    # so when we know the full prediction set, iterate over *it*, not the reports;
+    # otherwise the rate is silently computed over a shrunken denominator.
+    ids = sorted(predictions) if predictions else sorted(reports)
+
     instances = []
-    for r in sorted((load_report(p) for p in find_reports(logs_dir)), key=lambda r: r["instance_id"]):
-        iid = r["instance_id"]
+    for iid in ids:
+        r = reports.get(iid)
         row = {
             "instance_id": iid,
-            "resolved": bool(r.get("resolved")),
-            "patch_applied": bool(r.get("patch_successfully_applied")),
+            "resolved": bool(r.get("resolved")) if r else False,
+            "patch_applied": bool(r.get("patch_successfully_applied")) if r else False,
+            "evaluated": r is not None,
         }
         pred = predictions.get(iid)
         if pred is not None:
+            row["empty_patch"] = bool(pred.get("_empty_patch"))
             in_tok = pred.get("_input_tokens") or 0
             out_tok = pred.get("_output_tokens") or 0
             # prefer the recorded flag; fall back to inferring from calls vs --max-turns
@@ -117,11 +127,20 @@ def summarize(
             "cost": round(sum(costs), 4) if costs else None,
         }
 
+    evaluated = [it for it in instances if it["evaluated"]]
+    empty = [it for it in instances if it.get("empty_patch")]
+
     return {
         "logs_dir": str(logs_dir),
         "total": len(instances),
         "resolved": len(resolved),
         "resolved_rate": round(len(resolved) / len(instances), 4) if instances else 0.0,
+        # rate among instances that actually produced a patch and got scored
+        "evaluated": len(evaluated),
+        "empty_patches": len(empty),
+        "resolved_rate_of_evaluated": (
+            round(len(resolved) / len(evaluated), 4) if evaluated else 0.0
+        ),
         "patch_applied": len(applied),
         "has_predictions": bool(predictions),
         "overall": _agg(instances),
@@ -169,8 +188,15 @@ def _print_table(result: dict) -> None:
     print("-" * 40)
     print(
         f"resolved {result['resolved']}/{result['total']} "
-        f"({result['resolved_rate'] * 100:.1f}%)  |  patch applied {result['patch_applied']}/{result['total']}"
+        f"({result['resolved_rate'] * 100:.1f}%)  |  patch applied "
+        f"{result['patch_applied']}/{result['total']}"
     )
+    if result.get("empty_patches"):
+        print(
+            f"  ({result['empty_patches']} empty patch(es) never scored — counted as unresolved; "
+            f"rate among the {result['evaluated']} scored: "
+            f"{result['resolved_rate_of_evaluated'] * 100:.1f}%)"
+        )
     if withp:
         ov, rs, us = result["overall"], result["resolved_stats"], result["unresolved_stats"]
         if "input_tokens" in ov:

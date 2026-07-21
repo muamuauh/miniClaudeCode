@@ -110,7 +110,7 @@ cd ~
 ~/sweb-venv/bin/python -m swebench.harness.run_evaluation \
   --dataset_name princeton-nlp/SWE-bench_Lite \
   --predictions_path /mnt/e/codes/miniClaudeCode/evals/swebench/out/predictions.jsonl \
-  --max_workers 4 --run_id mcc-run --cache_level env
+  --max_workers 4 --run_id mcc-run --cache_level instance
 ```
 
 First run builds a Docker image per repo (large, slow; ~14 min for astropy). It
@@ -130,6 +130,12 @@ succeeds, a top-level report with the resolved rate.
   It still resets on distro re-init / Docker Desktop updates — recover with
   `wsl --shutdown`, kill+relaunch Docker Desktop, then run the harness immediately
   in one continuous session.
+- *Use `--cache_level instance`, not `env`.* swebench 4.x doesn't build images
+  locally — it **pulls a prebuilt per-instance image** (`swebench/sweb.eval.x86_64.
+  <instance>`) from Docker Hub. `--cache_level env` only keeps base/env images, which
+  in that flow never exist, so every pulled image is deleted right after use and each
+  run re-downloads gigabytes. `instance` keeps them (~1-2GB each, so budget ~50-100GB
+  for 50 instances) and makes re-runs and model comparisons far faster.
 - *The summary step can crash* (`make_run_report` fetches every repo's
   requirements from raw.githubusercontent.com). The eval itself still finishes and
   the per-instance `report.json` files are valid — summarize them directly:
@@ -189,7 +195,15 @@ statistically significant, but a real, reproducible signal:
 | gold-gate | gold reference | 1/1 | — | proves the local scoring chain works |
 | agent-3 | miniclaudecode · qwen3.7-max | 2/3 | — | astropy-12907 ✅, 14182 ✅, 14365 ❌ |
 | agent-10 | miniclaudecode · qwen3.7-max | 5/10 (50%) | 169k | first 10 of the dataset (6 astropy + 4 django) |
-| **kimi-10** | miniclaudecode · kimi-k3 | **9/10 (90%)** | 331k | same 10 instances; only missed astropy-7746 |
+| kimi-10 | miniclaudecode · kimi-k3 | 9/10 (90%) | 331k | same 10 instances; only missed astropy-7746 |
+| **kimi-50** | miniclaudecode · kimi-k3 | **42/50 (84%)** | 321k | first 50 (6 astropy + 44 django); 5 empty patches count as unresolved (93.3% of the 45 scored) |
+
+**At n=50, kimi-k3 holds up: 84%** (42/50) — close to its 90% on the 10-instance
+sample, so that number wasn't a fluke. Counting convention matters: 5 instances where
+the agent produced *no diff at all* never reach the harness (nothing to apply) and are
+**unresolved** by the SWE-bench metric; ignoring them would inflate the score to 93.3%.
+`summarize_reports.py` reports both. Caveat: qwen is still only at n=10, so the
+head-to-head below is not an equal-n comparison.
 
 **Model comparison (same agent, same 10 instances).** kimi-k3 resolved 9/10 vs
 qwen3.7-max's 5/10 — the scaffold is identical, so this is a model-quality gap, not
