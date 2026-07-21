@@ -135,7 +135,12 @@ succeeds, a top-level report with the resolved rate.
   the per-instance `report.json` files are valid — summarize them directly:
 
   ```bash
-  python3 /mnt/e/codes/miniClaudeCode/evals/swebench/summarize_reports.py --run-id mcc-run
+  # resolved rate only:
+  python3 evals/swebench/summarize_reports.py --run-id mcc-run
+  # + per-instance tokens / calls / time / turn-cap, split resolved vs unresolved:
+  python3 evals/swebench/summarize_reports.py --run-id mcc-run \
+      --predictions evals/swebench/out/predictions.jsonl --max-turns 40
+  # add --price-in / --price-out (USD per 1M tokens) for cost and cost-per-resolved
   ```
 
 ### Option B — sb-cli (cloud scoring, no local Docker) ⚠️ unreliable here
@@ -193,3 +198,9 @@ django-10924, django-11019. **All 10 patches applied cleanly**
 Predictions are non-deterministic (astropy-14182 resolved in agent-3 but not in the
 agent-10 regeneration). The same patches scored 0% via sb-cli (Option B) — a
 broken-cloud artifact, not the agent.
+
+**Efficiency signal** (from joining generation tokens via `summarize_reports.py
+--predictions`): on agent-10 the resolved instances averaged **~55k input tokens /
+10.4 calls**, the unresolved ones **~283k / 18.6 calls** — a ~5× gap. When the agent
+starts thrashing (turns and tokens climbing) it's usually already lost; the wins are
+cheap. None hit the turn cap (40), so misses are wrong answers, not truncation.

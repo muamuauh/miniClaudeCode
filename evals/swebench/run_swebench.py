@@ -172,6 +172,7 @@ def generate_one(
         if not keep_clone:
             shutil.rmtree(workdir, ignore_errors=True)
 
+    max_turns = getattr(config, "max_turns", None) if config is not None else None
     return {
         "instance_id": instance_id,
         "model_name_or_path": MODEL_NAME,
@@ -183,6 +184,10 @@ def generate_one(
         "_output_tokens": tokens_out,
         "_llm_calls": calls,
         "_duration_s": round(time.monotonic() - started, 1),
+        # did the agent stop on its own, or get cut off at the turn budget?
+        # (lets scoring tell "wrong answer" apart from "ran out of turns")
+        "_max_turns": max_turns,
+        "_hit_turn_cap": bool(max_turns is not None and calls >= max_turns),
     }
 
 
