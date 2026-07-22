@@ -205,6 +205,31 @@ the agent produced *no diff at all* never reach the harness (nothing to apply) a
 `summarize_reports.py` reports both. Caveat: qwen is still only at n=10, so the
 head-to-head below is not an equal-n comparison.
 
+### Failure attribution (`analyze_failures.py`)
+
+`resolved: false` is one bit; joining predictions + report.json + the gold patch says
+*how* it failed. On kimi-50 the 8 failures split:
+
+| category | n | meaning |
+|---|---|---|
+| `agent_error` | 4 | 3× git clone `schannel: failed to receive handshake` (**0 LLM calls — the agent never ran**), 1× APIConnectionError mid-run |
+| `wrong_logic` | 2 | edited exactly the file the gold patch edits, but the fix was wrong |
+| `regression` | 1 | fixed the bug but broke a previously-passing test |
+| `empty_patch` | 1 | ran 1 turn, produced no diff |
+
+**Three of the eight "failures" were network flakes, not model failures** — over a
+5-hour run, transient TLS errors aborted the clone before the agent started. Excluding
+them: **89.4%** (42/47), back in line with the n=10 result. Two fixes came out of this:
+`prepare_repo` now retries the fetch with backoff, and the summarizer counts
+"agent never ran" instances separately instead of silently scoring them as model
+failures. Note what is *not* in the table: no `wrong_file` — kimi localized the right
+file every time it got to run; its genuine misses are reasoning, not search.
+
+```bash
+python evals/swebench/analyze_failures.py \
+    --predictions evals/swebench/out/predictions_kimi50.jsonl --run-id kimi-50
+```
+
 **Model comparison (same agent, same 10 instances).** kimi-k3 resolved 9/10 vs
 qwen3.7-max's 5/10 — the scaffold is identical, so this is a model-quality gap, not
 an agent gap. kimi costs it: ~331k vs ~169k input tokens/instance (~2× the tokens for

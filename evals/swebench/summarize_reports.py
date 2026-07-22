@@ -90,6 +90,11 @@ def summarize(
         pred = predictions.get(iid)
         if pred is not None:
             row["empty_patch"] = bool(pred.get("_empty_patch"))
+            row["error"] = pred.get("_error")
+            # A clone/network failure aborts the instance before the agent makes a
+            # single call. Scoring that as a model failure understates the model, so
+            # track it separately rather than silently folding it into the rate.
+            row["agent_never_ran"] = bool(pred.get("_error")) and not (pred.get("_llm_calls") or 0)
             in_tok = pred.get("_input_tokens") or 0
             out_tok = pred.get("_output_tokens") or 0
             # prefer the recorded flag; fall back to inferring from calls vs --max-turns
@@ -129,8 +134,16 @@ def summarize(
 
     evaluated = [it for it in instances if it["evaluated"]]
     empty = [it for it in instances if it.get("empty_patch")]
+    never_ran = [it for it in instances if it.get("agent_never_ran")]
+    attempted = [it for it in instances if not it.get("agent_never_ran")]
 
     return {
+        "agent_never_ran": len(never_ran),
+        "agent_never_ran_ids": [it["instance_id"] for it in never_ran],
+        # rate over instances the agent actually got to attempt
+        "resolved_rate_attempted": (
+            round(len(resolved) / len(attempted), 4) if attempted else 0.0
+        ),
         "logs_dir": str(logs_dir),
         "total": len(instances),
         "resolved": len(resolved),
@@ -197,6 +210,14 @@ def _print_table(result: dict) -> None:
             f"rate among the {result['evaluated']} scored: "
             f"{result['resolved_rate_of_evaluated'] * 100:.1f}%)"
         )
+    if result.get("agent_never_ran"):
+        n = result["agent_never_ran"]
+        print(
+            f"  ({n} instance(s) the agent never ran — clone/network error, 0 LLM calls; "
+            f"excluding them: {result['resolved_rate_attempted'] * 100:.1f}%)"
+        )
+        for iid in result["agent_never_ran_ids"]:
+            print(f"      infra-failed: {iid}")
     if withp:
         ov, rs, us = result["overall"], result["resolved_stats"], result["unresolved_stats"]
         if "input_tokens" in ov:

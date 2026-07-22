@@ -93,13 +93,32 @@ def _git(args: list[str], cwd: str | Path | None = None, check: bool = True) -> 
     )
 
 
+FETCH_ATTEMPTS = 4
+
+
 def prepare_repo(repo: str, base_commit: str, dest: Path) -> None:
-    """Fetch just `base_commit` of `repo` into `dest` (GitHub allows fetch-by-SHA)."""
+    """Fetch just `base_commit` of `repo` into `dest` (GitHub allows fetch-by-SHA).
+
+    The fetch is retried: over a long run, transient TLS/network failures
+    ("schannel: failed to receive handshake") otherwise abort the instance before
+    the agent ever starts, and a clone failure would be indistinguishable from the
+    agent producing no patch — quietly scoring an infrastructure blip as a model
+    failure.
+    """
     url = f"https://github.com/{repo}.git"
     dest.mkdir(parents=True, exist_ok=True)
     _git(["init", "-q"], cwd=dest)
     _git(["remote", "add", "origin", url], cwd=dest)
-    _git(["fetch", "-q", "--depth", "1", "origin", base_commit], cwd=dest)
+    for attempt in range(1, FETCH_ATTEMPTS + 1):
+        proc = _git(["fetch", "-q", "--depth", "1", "origin", base_commit],
+                    cwd=dest, check=False)
+        if proc.returncode == 0:
+            break
+        if attempt == FETCH_ATTEMPTS:
+            raise subprocess.CalledProcessError(
+                proc.returncode, proc.args, output=proc.stdout, stderr=proc.stderr
+            )
+        time.sleep(2 ** attempt)  # 2s, 4s, 8s
     _git(["checkout", "-q", base_commit], cwd=dest)
 
 
